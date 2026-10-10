@@ -6,8 +6,7 @@ const Database = require('better-sqlite3')
 const app = express()
 const PORT = process.env.PORT || 5000
 
-// Render persistent disk के लिए DB_PATH set कर सकते हैं.
-// Local development में database backend/todo.db में बनेगा.
+
 const DB_PATH =
   process.env.DB_PATH || path.join(__dirname, 'todo.db')
 
