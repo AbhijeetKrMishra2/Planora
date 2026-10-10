@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import './App.css'
 
-const API = 'http://localhost:5000/api'
+const API = 'https://planora-backend-gjja.onrender.com/api'
 const CATEGORIES = ['Work', 'Study', 'Personal', 'Health', 'Shopping', 'Other']
 const PRIORITIES = ['High', 'Medium', 'Low']
 
