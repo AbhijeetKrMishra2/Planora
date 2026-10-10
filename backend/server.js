@@ -4,13 +4,23 @@ const path = require('path')
 const Database = require('better-sqlite3')
 
 const app = express()
-const PORT = 5000
-const db = new Database(path.join(__dirname, 'todo.db'))
+const PORT = process.env.PORT || 5000
+
+// Render persistent disk के लिए DB_PATH set कर सकते हैं.
+// Local development में database backend/todo.db में बनेगा.
+const DB_PATH =
+  process.env.DB_PATH || path.join(__dirname, 'todo.db')
+
+const db = new Database(DB_PATH)
 
 db.pragma('journal_mode = WAL')
+db.pragma('foreign_keys = ON')
 
 app.use(cors({
-  origin: 'http://localhost:5173'
+  origin: [
+    'http://localhost:5173',
+    process.env.FRONTEND_URL
+  ].filter(Boolean)
 }))
 
 app.use(express.json())
@@ -26,7 +36,7 @@ const categories = [
 
 const priorities = ['High', 'Medium', 'Low']
 
-// Create the table, or add new columns to an existing database.
+// Create table if it does not exist.
 db.exec(`
   CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,7 +50,7 @@ db.exec(`
   )
 `)
 
-// Upgrade an older database without deleting existing tasks.
+// Safely upgrade an older database.
 const existingColumns = db
   .prepare('PRAGMA table_info(tasks)')
   .all()
@@ -97,7 +107,8 @@ function validateTaskFields(body, existing = {}) {
   const dueDate = body.dueDate ?? existing.dueDate ?? ''
   const category = body.category ?? existing.category ?? 'Personal'
   const notes = body.notes ?? existing.notes ?? ''
-  const completed = body.completed ?? Boolean(existing.completed ?? false)
+  const completed =
+    body.completed ?? Boolean(existing.completed ?? false)
 
   if (typeof title !== 'string' || !title.trim()) {
     return { error: 'Task title is required' }
@@ -136,7 +147,7 @@ function validateTaskFields(body, existing = {}) {
 // Root route
 app.get('/', (req, res) => {
   res.send(
-    'To-Do Backend is running! Open /api/health to check the API.'
+    'Planora Backend is running! Check /api/health for API status.'
   )
 })
 
@@ -144,7 +155,7 @@ app.get('/', (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    message: 'To-Do API is running',
+    message: 'Planora API is running',
     database: 'SQLite'
   })
 })
@@ -154,7 +165,7 @@ app.get('/api/tasks', (req, res) => {
   try {
     res.json(getAllTasks())
   } catch (error) {
-    console.error(error)
+    console.error('Fetch tasks error:', error)
     res.status(500).json({ error: 'Could not fetch tasks' })
   }
 })
@@ -186,10 +197,9 @@ app.post('/api/tasks', (req, res) => {
     )
 
     const created = formatTask(getTask(result.lastInsertRowid))
-
     res.status(201).json(created)
   } catch (error) {
-    console.error(error)
+    console.error('Create task error:', error)
     res.status(500).json({ error: 'Could not create task' })
   }
 })
@@ -238,7 +248,7 @@ app.patch('/api/tasks/:id', (req, res) => {
 
     res.json(formatTask(getTask(id)))
   } catch (error) {
-    console.error(error)
+    console.error('Update task error:', error)
     res.status(500).json({ error: 'Could not update task' })
   }
 })
@@ -255,7 +265,7 @@ app.delete('/api/tasks/completed', (req, res) => {
       deletedCount: result.changes
     })
   } catch (error) {
-    console.error(error)
+    console.error('Delete completed tasks error:', error)
     res.status(500).json({
       error: 'Could not delete completed tasks'
     })
@@ -281,15 +291,15 @@ app.delete('/api/tasks/:id', (req, res) => {
 
     res.json({ message: 'Task deleted successfully' })
   } catch (error) {
-    console.error(error)
+    console.error('Delete task error:', error)
     res.status(500).json({ error: 'Could not delete task' })
   }
 })
 
-// Import old localStorage tasks only when their IDs do not exist.
+// Import old localStorage tasks without duplicating existing IDs.
 app.post('/api/tasks/import', (req, res) => {
   try {
-    if (!Array.isArray(req.body.tasks)) {
+    if (!req.body || !Array.isArray(req.body.tasks)) {
       return res.status(400).json({
         error: 'Expected a tasks array'
       })
@@ -355,12 +365,14 @@ app.post('/api/tasks/import', (req, res) => {
       tasks: getAllTasks()
     })
   } catch (error) {
-    console.error(error)
+    console.error('Import tasks error:', error)
     res.status(500).json({ error: 'Could not import tasks' })
   }
 })
 
-app.listen(PORT, () => {
-  console.log(`To-Do API running at http://localhost:${PORT}`)
-  console.log(`SQLite database: ${path.join(__dirname, 'todo.db')}`)
+// Start the server on Render's assigned port.
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Planora API is running on port ${PORT}`)
+  console.log(`SQLite database path: ${DB_PATH}`)
 })
+
