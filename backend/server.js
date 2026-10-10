@@ -1,28 +1,42 @@
-const express = require('express')
-const cors = require('cors')
-const path = require('path')
-const Database = require('better-sqlite3')
 
-const app = express()
-const PORT = process.env.PORT || 5000
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+const Database = require('better-sqlite3');
 
+const app = express();
 
+// Render automatically provides PORT.
+const PORT = process.env.PORT || 5000;
+
+// Keep the existing SQLite database path unless DB_PATH is configured.
 const DB_PATH =
-  process.env.DB_PATH || path.join(__dirname, 'todo.db')
+  process.env.DB_PATH || path.join(__dirname, 'todo.db');
 
-const db = new Database(DB_PATH)
+const db = new Database(DB_PATH);
 
-db.pragma('journal_mode = WAL')
-db.pragma('foreign_keys = ON')
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+// Allow the hosted Netlify frontend and local development frontend.
+const allowedOrigins = [
+  'https://plannnerapp.netlify.app',
+  'http://localhost:5173',
+  process.env.FRONTEND_URL
+].filter(Boolean);
 
 app.use(cors({
-  origin: [
-    'http://localhost:5173',
-    process.env.FRONTEND_URL
-  ].filter(Boolean)
-}))
+  origin: function (origin, callback) {
+    // Requests without an Origin header, such as health checks, are allowed.
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
 
-app.use(express.json())
+    return callback(new Error('Origin not allowed by CORS'));
+  }
+}));
+
+app.use(express.json({ limit: '1mb' }));
 
 const categories = [
   'Work',
@@ -31,11 +45,11 @@ const categories = [
   'Health',
   'Shopping',
   'Other'
-]
+];
 
-const priorities = ['High', 'Medium', 'Low']
+const priorities = ['High', 'Medium', 'Low'];
 
-// Create table if it does not exist.
+// Create the tasks table if it does not exist.
 db.exec(`
   CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,30 +61,30 @@ db.exec(`
     category TEXT NOT NULL DEFAULT 'Personal',
     notes TEXT NOT NULL DEFAULT ''
   )
-`)
+`);
 
-// Safely upgrade an older database.
+// Safely upgrade older databases.
 const existingColumns = db
   .prepare('PRAGMA table_info(tasks)')
   .all()
-  .map(column => column.name)
+  .map(column => column.name);
 
 if (!existingColumns.includes('category')) {
   db.exec(`
     ALTER TABLE tasks
     ADD COLUMN category TEXT NOT NULL DEFAULT 'Personal'
-  `)
+  `);
 }
 
 if (!existingColumns.includes('notes')) {
   db.exec(`
     ALTER TABLE tasks
     ADD COLUMN notes TEXT NOT NULL DEFAULT ''
-  `)
+  `);
 }
 
 function formatTask(task) {
-  if (!task) return task
+  if (!task) return task;
 
   return {
     ...task,
@@ -84,51 +98,51 @@ function formatTask(task) {
     notes: typeof task.notes === 'string'
       ? task.notes
       : ''
-  }
+  };
 }
 
 function getTask(id) {
   return db
     .prepare('SELECT * FROM tasks WHERE id = ?')
-    .get(id)
+    .get(id);
 }
 
 function getAllTasks() {
   return db
     .prepare('SELECT * FROM tasks ORDER BY createdAt DESC, id DESC')
     .all()
-    .map(formatTask)
+    .map(formatTask);
 }
 
 function validateTaskFields(body, existing = {}) {
-  const title = body.title ?? existing.title ?? ''
-  const priority = body.priority ?? existing.priority ?? 'Medium'
-  const dueDate = body.dueDate ?? existing.dueDate ?? ''
-  const category = body.category ?? existing.category ?? 'Personal'
-  const notes = body.notes ?? existing.notes ?? ''
+  const title = body.title ?? existing.title ?? '';
+  const priority = body.priority ?? existing.priority ?? 'Medium';
+  const dueDate = body.dueDate ?? existing.dueDate ?? '';
+  const category = body.category ?? existing.category ?? 'Personal';
+  const notes = body.notes ?? existing.notes ?? '';
   const completed =
-    body.completed ?? Boolean(existing.completed ?? false)
+    body.completed ?? Boolean(existing.completed ?? false);
 
   if (typeof title !== 'string' || !title.trim()) {
-    return { error: 'Task title is required' }
+    return { error: 'Task title is required' };
   }
 
   if (!priorities.includes(priority)) {
-    return { error: 'Priority must be High, Medium, or Low' }
+    return { error: 'Priority must be High, Medium, or Low' };
   }
 
   if (!categories.includes(category)) {
     return {
       error: `Invalid category. Choose one of: ${categories.join(', ')}`
-    }
+    };
   }
 
   if (typeof dueDate !== 'string' || typeof notes !== 'string') {
-    return { error: 'Due date and notes must be text values' }
+    return { error: 'Due date and notes must be text values' };
   }
 
   if (typeof completed !== 'boolean') {
-    return { error: 'Completed must be true or false' }
+    return { error: 'Completed must be true or false' };
   }
 
   return {
@@ -140,45 +154,56 @@ function validateTaskFields(body, existing = {}) {
       notes: notes.trim(),
       completed
     }
-  }
+  };
 }
 
 // Root route
 app.get('/', (req, res) => {
   res.send(
     'Planora Backend is running! Check /api/health for API status.'
-  )
-})
+  );
+});
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    message: 'Planora API is running',
-    database: 'SQLite'
-  })
-})
+  try {
+    // Verify that the SQLite database can execute a query.
+    db.prepare('SELECT 1').get();
+
+    res.json({
+      status: 'ok',
+      message: 'Planora API is running',
+      database: 'SQLite'
+    });
+  } catch (error) {
+    console.error('Health check error:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Database health check failed'
+    });
+  }
+});
 
 // Get all tasks
 app.get('/api/tasks', (req, res) => {
   try {
-    res.json(getAllTasks())
+    res.json(getAllTasks());
   } catch (error) {
-    console.error('Fetch tasks error:', error)
-    res.status(500).json({ error: 'Could not fetch tasks' })
+    console.error('Fetch tasks error:', error);
+    res.status(500).json({ error: 'Could not fetch tasks' });
   }
-})
+});
 
 // Create a task
 app.post('/api/tasks', (req, res) => {
   try {
-    const validated = validateTaskFields(req.body)
+    const validated = validateTaskFields(req.body);
 
     if (validated.error) {
-      return res.status(400).json({ error: validated.error })
+      return res.status(400).json({ error: validated.error });
     }
 
-    const task = validated.value
+    const task = validated.value;
 
     const result = db.prepare(`
       INSERT INTO tasks
@@ -193,38 +218,38 @@ app.post('/api/tasks', (req, res) => {
       Date.now(),
       task.category,
       task.notes
-    )
+    );
 
-    const created = formatTask(getTask(result.lastInsertRowid))
-    res.status(201).json(created)
+    const created = formatTask(getTask(result.lastInsertRowid));
+    res.status(201).json(created);
   } catch (error) {
-    console.error('Create task error:', error)
-    res.status(500).json({ error: 'Could not create task' })
+    console.error('Create task error:', error);
+    res.status(500).json({ error: 'Could not create task' });
   }
-})
+});
 
 // Update an existing task
 app.patch('/api/tasks/:id', (req, res) => {
   try {
-    const id = Number(req.params.id)
+    const id = Number(req.params.id);
 
     if (!Number.isSafeInteger(id) || id <= 0) {
-      return res.status(400).json({ error: 'Invalid task ID' })
+      return res.status(400).json({ error: 'Invalid task ID' });
     }
 
-    const existing = getTask(id)
+    const existing = getTask(id);
 
     if (!existing) {
-      return res.status(404).json({ error: 'Task not found' })
+      return res.status(404).json({ error: 'Task not found' });
     }
 
-    const validated = validateTaskFields(req.body, existing)
+    const validated = validateTaskFields(req.body, existing);
 
     if (validated.error) {
-      return res.status(400).json({ error: validated.error })
+      return res.status(400).json({ error: validated.error });
     }
 
-    const task = validated.value
+    const task = validated.value;
 
     db.prepare(`
       UPDATE tasks
@@ -243,65 +268,65 @@ app.patch('/api/tasks/:id', (req, res) => {
       task.category,
       task.notes,
       id
-    )
+    );
 
-    res.json(formatTask(getTask(id)))
+    res.json(formatTask(getTask(id)));
   } catch (error) {
-    console.error('Update task error:', error)
-    res.status(500).json({ error: 'Could not update task' })
+    console.error('Update task error:', error);
+    res.status(500).json({ error: 'Could not update task' });
   }
-})
+});
 
 // Delete all completed tasks
 app.delete('/api/tasks/completed', (req, res) => {
   try {
     const result = db
       .prepare('DELETE FROM tasks WHERE completed = 1')
-      .run()
+      .run();
 
     res.json({
       message: 'Completed tasks deleted',
       deletedCount: result.changes
-    })
+    });
   } catch (error) {
-    console.error('Delete completed tasks error:', error)
+    console.error('Delete completed tasks error:', error);
     res.status(500).json({
       error: 'Could not delete completed tasks'
-    })
+    });
   }
-})
+});
 
 // Delete one task
 app.delete('/api/tasks/:id', (req, res) => {
   try {
-    const id = Number(req.params.id)
+    const id = Number(req.params.id);
 
     if (!Number.isSafeInteger(id) || id <= 0) {
-      return res.status(400).json({ error: 'Invalid task ID' })
+      return res.status(400).json({ error: 'Invalid task ID' });
     }
 
     const result = db
       .prepare('DELETE FROM tasks WHERE id = ?')
-      .run(id)
+      .run(id);
 
     if (result.changes === 0) {
-      return res.status(404).json({ error: 'Task not found' })
+      return res.status(404).json({ error: 'Task not found' });
     }
 
-    res.json({ message: 'Task deleted successfully' })
+    res.json({ message: 'Task deleted successfully' });
   } catch (error) {
-    console.error('Delete task error:', error)
-    res.status(500).json({ error: 'Could not delete task' })
+    console.error('Delete task error:', error);
+    res.status(500).json({ error: 'Could not delete task' });
   }
-})
+});
 
-// Import old localStorage tasks without duplicating existing IDs.
+// Import existing localStorage tasks without duplicating IDs.
 app.post('/api/tasks/import', (req, res) => {
   try {
     if (!req.body || !Array.isArray(req.body.tasks)) {
       return res.status(400).json({
         error: 'Expected a tasks array'
-      })
+      });
     }
 
     const insert = db.prepare(`
@@ -310,10 +335,10 @@ app.post('/api/tasks/import', (req, res) => {
       VALUES
         (@id, @title, @completed, @priority, @dueDate, @createdAt,
          @category, @notes)
-    `)
+    `);
 
     const importTasks = db.transaction(items => {
-      let importedCount = 0
+      let importedCount = 0;
 
       for (const item of items) {
         if (
@@ -322,16 +347,16 @@ app.post('/api/tasks/import', (req, res) => {
           typeof item.title !== 'string' ||
           !item.title.trim()
         ) {
-          continue
+          continue;
         }
 
         const category = categories.includes(item.category)
           ? item.category
-          : 'Personal'
+          : 'Personal';
 
         const priority = priorities.includes(item.priority)
           ? item.priority
-          : 'Medium'
+          : 'Medium';
 
         const result = insert.run({
           id: item.id,
@@ -348,30 +373,43 @@ app.post('/api/tasks/import', (req, res) => {
           notes: typeof item.notes === 'string'
             ? item.notes.trim()
             : ''
-        })
+        });
 
-        importedCount += result.changes
+        importedCount += result.changes;
       }
 
-      return importedCount
-    })
+      return importedCount;
+    });
 
-    const importedCount = importTasks(req.body.tasks)
+    const importedCount = importTasks(req.body.tasks);
 
     res.json({
       message: 'Import finished',
       importedCount,
       tasks: getAllTasks()
-    })
+    });
   } catch (error) {
-    console.error('Import tasks error:', error)
-    res.status(500).json({ error: 'Could not import tasks' })
+    console.error('Import tasks error:', error);
+    res.status(500).json({ error: 'Could not import tasks' });
   }
-})
+});
+
+// Handle malformed JSON requests.
+app.use((error, req, res, next) => {
+  if (error instanceof SyntaxError && error.status === 400 && 'body' in error) {
+    return res.status(400).json({ error: 'Invalid JSON body' });
+  }
+
+  if (error.message === 'Origin not allowed by CORS') {
+    return res.status(403).json({ error: 'Origin not allowed by CORS' });
+  }
+
+  console.error('Request error:', error);
+  res.status(500).json({ error: 'Internal server error' });
+});
 
 // Start the server on Render's assigned port.
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Planora API is running on port ${PORT}`)
-  console.log(`SQLite database path: ${DB_PATH}`)
-})
-
+  console.log(`Planora API is running on port ${PORT}`);
+  console.log(`SQLite database path: ${DB_PATH}`);
+});
